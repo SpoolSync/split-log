@@ -7,11 +7,13 @@ var MODES=[["equal","Equal"],["exact","Amounts"],["percent","Percent"],["shares"
 var MODEWORD={equal:"split equally",exact:"split by amounts",percent:"split by percent",shares:"split by shares",items:"split by item"};
 var IDRE=/^[a-z0-9]{6,24}$/;
 
-var S={ready:false,groups:[],left:{},screen:"home",gid:null};
+var S={ready:false,groups:[],left:{},screen:"home",gid:null},lastScreen="";
 var DEK=null,hiddenAt=0,lockMode="setup",eraseArmed=false,dlgUrls=[];
 
 /* ---------- helpers ---------- */
 function $(id){return document.getElementById(id);}
+/* Anonymous feature counts (pixora-usage.js): a fixed word per feature, never anything typed. */
+function T(f){try{if(window.PixoraUsage)PixoraUsage.track(f);}catch(e){}}
 function h(tag,attrs){
   var el=document.createElement(tag),k,v;
   if(attrs)for(k in attrs){v=attrs[k];if(v==null||v===false)continue;
@@ -144,6 +146,7 @@ function render(){
   if(!S.ready)return;
   var g=S.screen==="group"?grp(S.gid):null;
   if(S.screen==="group"&&!g)S.screen="home";
+  if(S.screen!==lastScreen){lastScreen=S.screen;T("screen_"+S.screen);}
   if(S.screen==="home")drawHome(app);else if(S.screen==="group")drawGroup(app,g);else drawSettings(app);
 }
 function amountEl(c,cur,tag){return h(tag||"span",{class:"mono "+(c>0?"pos":c<0?"neg":"muted"),text:money(Math.abs(c),cur)});}
@@ -363,6 +366,7 @@ function openExpense(g,e){
     else if(D.removeImage&&!isCopy){await imgDel(D.imageId);x.imageId=null;}
     else if(isCopy)x.imageId=null;
     x.ts=Date.now();
+    if(!isCopy){T(e?"expense_edit":"expense_add_"+x.mode);if(D.newBlob)T("receipt_photo");if(x.repeat)T("repeat_monthly");if(D.payer==="multi")T("several_payers");}
     var i=g.expenses.findIndex(function(y){return y.id===x.id;});
     if(i>=0)g.expenses[i]=x;else g.expenses.push(x);
     C.runRepeats(g,today(),Date.now);touch(g);await persist();closeDlg();render();
@@ -388,11 +392,11 @@ function openExpense(g,e){
     e?h("div",{class:"btnrow"},
       h("button",{type:"button",class:"btn quiet mini",text:"Duplicate for today",onclick:async function(){
         var x;try{x=build();}catch(er){err.textContent=er.message;err.hidden=false;return;}
-        x.id=rid();x.date=today();x.repeat=null;x.seriesId=null;x.anchorDay=null;x.createdAt=Date.now();D.newBlob=null;
+        x.id=rid();x.date=today();x.repeat=null;x.seriesId=null;x.anchorDay=null;x.createdAt=Date.now();D.newBlob=null;T("expense_duplicate");
         await commit(x,true);toast("Copied to today.");
       }}),
       armed(h("button",{type:"button",class:"btn quiet danger mini",text:"Delete"}),"Tap again to delete",async function(){
-        g.expenses=g.expenses.filter(function(y){return y.id!==e.id;});tombstone(g,"e_"+e.id);await imgDel(e.imageId);touch(g);await persist();closeDlg();render();
+        g.expenses=g.expenses.filter(function(y){return y.id!==e.id;});tombstone(g,"e_"+e.id);T("expense_delete");await imgDel(e.imageId);touch(g);await persist();closeDlg();render();
       })):null);
   drawPay();drawSplit();refresh();openDlg(form);
 }
@@ -406,6 +410,7 @@ function openPayment(g,s,suggest){
     var c=cents(D.amount),bad=!(c>0)?"Enter the amount paid.":D.from===D.to?"Choose two different people.":"";
     if(bad){err.textContent=bad;err.hidden=false;return;}
     var x={id:s?s.id:rid(),from:D.from,to:D.to,cents:c,date:D.date||today(),method:D.method,note:D.note.trim(),createdAt:s?s.createdAt:Date.now(),ts:Date.now()};
+    T(s?"payment_edit":suggest?"payment_from_suggestion":"payment_record");
     var i=g.settlements.findIndex(function(y){return y.id===x.id;});
     if(i>=0)g.settlements[i]=x;else g.settlements.push(x);
     touch(g);await persist();closeDlg();render();
@@ -457,7 +462,7 @@ function openGroup(g,note){
       if(JSON.stringify([g.name,g.currency,g.members])!==JSON.stringify([D.name.trim(),D.currency,members]))g.hts=now;
       if(meId!==g.me)g.pts=now;
       g.name=D.name.trim();g.currency=D.currency;g.members=members;g.me=meId;touch(g);
-    }else{g=newGroup(D.name.trim(),D.currency,members,meId);S.groups.push(g);}
+    }else{g=newGroup(D.name.trim(),D.currency,members,meId);S.groups.push(g);T("group_create");}
     await persist();closeDlg();go("group",g.id);
   }},
     h("h2",{id:"dlgTitle",text:g?"Edit group":"New group"}),
@@ -468,7 +473,7 @@ function openGroup(g,note){
     h("div",{class:"btnrow"},h("button",{type:"submit",class:"btn primary",text:"Save"}),h("button",{type:"button",class:"btn quiet",text:"Cancel",onclick:closeDlg}),
       g?armed(h("button",{type:"button",class:"btn quiet danger",text:leaving(g)?"Leave group":"Delete group"}),
         leaving(g)?"Tap again: removes the group from your phones. Your friends keep it.":g.cloud?"Tap again: deletes it for everyone in the group":"Tap again: deletes every expense in it",async function(){
-        await dropGroup(g);closeDlg();go("home");toast(leaving(g)?"You left the group.":"Group deleted.");
+        T(leaving(g)?"group_leave":"group_delete");await dropGroup(g);closeDlg();go("home");toast(leaving(g)?"You left the group.":"Group deleted.");
       }):null));
   openDlg(form);
 }
@@ -500,15 +505,15 @@ function openShare(g){
     ta,
     h("div",{class:"btnrow"},
       h("button",{type:"button",class:"btn primary",text:navigator.share?"Send summary":"Copy summary",onclick:async function(){
-        if(navigator.share){try{await navigator.share({text:text});}catch(e){}}else copy(text);
+        T("share_summary");if(navigator.share){try{await navigator.share({text:text});}catch(e){}}else copy(text);
       }}),
-      h("button",{type:"button",class:"btn",text:"Copy view-only link",onclick:function(){copy(shareLink(g));}})),
+      h("button",{type:"button",class:"btn",text:"Copy view-only link",onclick:function(){T("share_view_link");copy(shareLink(g));}})),
     h("p",{class:"small muted",text:"The link opens a read-only snapshot of the balances for anyone you send it to. They don't need the app or a passcode. It shows today's numbers and doesn't update, so send a fresh one after changes."}),
     h("hr",{class:"rule"}),
     h("div",{class:"btnrow"},
-      h("button",{type:"button",class:"btn quiet",text:"Save as spreadsheet",onclick:function(){saveFile(new Blob([groupCsv(g)],{type:"text/csv"}),fileName(g,".csv"));}}),
+      h("button",{type:"button",class:"btn quiet",text:"Save as spreadsheet",onclick:function(){T("export_csv");saveFile(new Blob([groupCsv(g)],{type:"text/csv"}),fileName(g,".csv"));}}),
       h("button",{type:"button",class:"btn quiet",text:"Send the whole group",onclick:function(){
-        var copyG=JSON.parse(JSON.stringify(g));copyG.expenses.forEach(function(e){e.imageId=null;});
+        T("export_group_file");var copyG=JSON.parse(JSON.stringify(g));copyG.expenses.forEach(function(e){e.imageId=null;});
         ["me","key","tok","owner","acct","cloud","gone","tomb","seen","hts","pts"].forEach(function(k){delete copyG[k];});
         saveFile(new Blob([JSON.stringify({app:"splitlog-group",v:1,group:copyG})],{type:"application/json"}),fileName(g,".splitlog.json"));
       }})),
@@ -567,7 +572,7 @@ function drawSettings(app){
     if(!g){gmsg.hidden=false;gmsg.textContent="That isn't a Split Log group file.";return;}
     var d=g.dropped;delete g.dropped;
     var fresh=newGroup(g.name,g.currency,g.members,null);fresh.expenses=g.expenses;fresh.settlements=g.settlements;
-    S.groups.push(fresh);await persist();
+    S.groups.push(fresh);await persist();T("import_group_file");
     go("group",fresh.id);openGroup(fresh,"Brought in as your own copy"+(d?", except "+d+" entries that didn't add up":"")+". Mark which person is you, then save.");
   });
   app.append(h("div",{class:"panel"},h("h3",{text:"Join or bring in a group"}),
@@ -586,7 +591,7 @@ function drawSettings(app){
       for(var i=0;i<ids.length;i++){var b=await imgLoad(ids[i]);if(b)images[ids[i]]={type:b.type,data:b64(new Uint8Array(await b.arrayBuffer()))};}
       var salt=rnd(16),box=await seal(await kek(p,salt,ITER),utf8(JSON.stringify({groups:S.groups,images:images})));
       await saveFile(new Blob([JSON.stringify({app:"splitlog-backup",v:1,iter:ITER,salt:b64(salt),iv:b64(box.iv),ct:b64(box.ct)})],{type:"application/json"}),"split-log-backup-"+today()+".json");
-      say(bmsg,"Backup made. Keep the file and its password somewhere safe.");
+      say(bmsg,"Backup made. Keep the file and its password somewhere safe.");T("backup_save");
     }catch(e){say(bmsg,"Couldn't make the backup. Try again.");}
     mk.disabled=false;mk.textContent="Save a backup file";
   }});
@@ -608,7 +613,7 @@ function drawSettings(app){
     try{
       await idb("images","readwrite",function(s){return s.clear();});
       for(var k in pendingR.images){var im=pendingR.images[k];if(IDRE.test(k)&&im&&typeof im.data==="string")await imgSave(new Blob([unb64(im.data)],{type:/^image\/[a-z0-9.+-]+$/.test(im.type)?im.type:"image/jpeg"}),k);}
-      S.groups=pendingR.groups;S.left={};await resetMarks();await persist();cloudStart();toast("Backup restored.");go("home");
+      S.groups=pendingR.groups;S.left={};await resetMarks();await persist();cloudStart();T("backup_restore");toast("Backup restored.");go("home");
     }catch(e){rbtn.disabled=false;say(bmsg,"The restore didn't finish. Try again.");}
   });
   app.append(h("div",{class:"panel"},h("h3",{text:"Backup"}),
@@ -1090,6 +1095,7 @@ function parseInvite(text){
   return {gid:m[1],key:b64(key),tok:m[3]};
 }
 function openInvite(g){
+  T("invite_open");
   var box=h("div",{class:"form"},h("h2",{id:"dlgTitle",text:"Invite friends to "+g.name}));
   if(!cuser){
     box.append(h("p",{class:"small",text:"Shared groups live in your Pixora account, so friends see the same totals and can add expenses themselves. Sign in or create a free Pixora account first."}),
@@ -1104,7 +1110,7 @@ function openInvite(g){
     ta,
     h("div",{class:"btnrow"},
       h("button",{type:"button",class:"btn primary",text:navigator.share?"Send invite":"Copy invite",onclick:async function(){
-        if(navigator.share){try{await navigator.share({text:"Join "+g.name+" on Split Log: "+link});}catch(e){}}else copy(link);
+        T("invite_send");if(navigator.share){try{await navigator.share({text:"Join "+g.name+" on Split Log: "+link});}catch(e){}}else copy(link);
       }}),
       navigator.share?h("button",{type:"button",class:"btn",text:"Copy",onclick:function(){copy(link);}}):null),
     h("p",{class:"small muted",text:"Anyone who has this link can join and see the group, so send it only to the people in it. The link holds the group's key: the Pixora servers never see it, so they can't read the group."}),
@@ -1119,7 +1125,7 @@ function openJoin(code){
     if(!v){msg.textContent="That doesn't look like a Split Log invite. Paste the whole link.";msg.hidden=false;return;}
     if(!cuser){msg.textContent="Sign in with your Pixora account below first.";msg.hidden=false;return;}
     go1.disabled=true;go1.textContent="Joining…";msg.hidden=true;
-    try{var g=await joinGroup(v);closeDlg();go("group",g.id);if(!g.me)openGroup(g,"You're in. Mark which person is you, or add yourself, then save.");}
+    try{var g=await joinGroup(v);T("join_group");closeDlg();go("group",g.id);if(!g.me)openGroup(g,"You're in. Mark which person is you, or add yourself, then save.");}
     catch(e){msg.textContent=e&&e.message||"Couldn't join. Try again.";msg.hidden=false;go1.disabled=false;go1.textContent="Join";}
   }});
   box.append(inv?h("p",{class:"small",text:"A friend invited you to a shared group. Join to see the balances and add expenses together."}):null,
@@ -1164,6 +1170,7 @@ async function acctAuth(mode,email,pw){
   if(mode==="reset"){await firebase.auth().sendPasswordResetEmail(email);return null;}
   if(!pw)throw {code:"auth/missing-password",message:"Type your password."};
   var c=mode==="create"?await firebase.auth().createUserWithEmailAndPassword(email,pw):await firebase.auth().signInWithEmailAndPassword(email,pw);
+  T(mode==="create"?"account_create":"signin");
   cuser=c.user;return cuser;
 }
 function authText(e){return AUTH_MSG[e&&e.code]||(e&&e.message)||"Something went wrong. Try again.";}
@@ -1268,6 +1275,7 @@ async function start(){
     try{var s=hash.slice(3).replace(/-/g,"+").replace(/_/g,"/");snap=C.cleanSnapshot(JSON.parse(new TextDecoder().decode(unb64(s))));}catch(e){}
   }
   if(hash.slice(0,6)==="#join="){pendingJoin=hash.slice(6);history.replaceState(null,"",location.pathname+location.search);}
-  if(snap)showShared(snap,start);else start();
+  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v4",function(){return fdb&&cuser?fdb:null;});
+  if(snap){T("view_only_link_opened");showShared(snap,start);}else start();
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
 })();

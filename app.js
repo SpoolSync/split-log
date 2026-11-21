@@ -638,7 +638,7 @@ function drawSettings(app){
     h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:"Lock now",onclick:lock}))));
   app.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pw("s-cur","Current passcode","current-password"),pw("s-new","New passcode","new-password"),pw("s-conf","Repeat new passcode","new-password"),pmsg,h("div",{class:"btnrow"},change)));
 
-  app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies."}),
+  app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),
     h("div",{class:"btnrow"},armed(h("button",{type:"button",class:"btn danger",text:"Erase everything"}),"Tap again to erase everything",eraseEverything))));
 }
 

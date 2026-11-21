@@ -1,0 +1,2 @@
+/* Pixora Firebase project, web app "Split Log". This is not a secret: access is controlled by the database rules. */
+window.PIXORA_CLOUD={"apiKey":"AIzaSyBFS3r39YxR0vRDhquJAjAWdBi13coMzjI","authDomain":"pixora-bca1f.firebaseapp.com","projectId":"pixora-bca1f","storageBucket":"pixora-bca1f.firebasestorage.app","messagingSenderId":"780202603328","appId":"1:780202603328:web:d98b727674a73436b1c0a5"};

@@ -1,0 +1,31 @@
+    // Split Log: a group is shared by its members. Joining needs the secret carried in the invite,
+    // and everything inside a group is encrypted on the phones with a key the server never sees.
+    function splitGroup(db, gid) { return /databases/$(db)/documents/apps/splitlog/groups/$(gid); }
+    function splitMember(db, gid) {
+      return signedIn() && exists(/databases/$(db)/documents/apps/splitlog/groups/$(gid)/members/$(request.auth.uid));
+    }
+    match /apps/splitlog/groups/{gid} {
+      allow get: if splitMember(database, gid);
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.jh is string && request.resource.data.jh.size() == 64;
+      allow update: if splitMember(database, gid)
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.jh == resource.data.jh;
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
+
+      match /members/{uid} {
+        allow get: if isMe(uid) || splitMember(database, gid);
+        allow list: if splitMember(database, gid);
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['t', 'at'])
+          && request.resource.data.t is string
+          && hashing.sha256(request.resource.data.t).toHexString().lower() == get(splitGroup(database, gid)).data.jh;
+        allow delete: if isMe(uid)
+          || (signedIn() && get(splitGroup(database, gid)).data.owner == request.auth.uid);
+      }
+
+      match /items/{id} {
+        allow read, write: if splitMember(database, gid);
+      }
+    }

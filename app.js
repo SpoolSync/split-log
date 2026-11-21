@@ -111,7 +111,7 @@ async function changePass(cur,next){
 }
 function persist(){
   var snap=JSON.stringify({groups:S.groups,left:S.left||{}}),key=DEK;
-  writeChain=writeChain.catch(function(){}).then(async function(){await kvSet("state",await seal(key,utf8(snap)));cloudKick();});
+  writeChain=writeChain.catch(function(){}).then(async function(){await kvSet("state",await seal(key,utf8(snap)));cloudKick();dashKick();});
   return writeChain;
 }
 /* receipt photos: shrunk, then encrypted like everything else */
@@ -855,6 +855,7 @@ async function cloudStart(){
   if((cm.mts||0)>(meta.mts||0))await kvSet("meta",cm);
   else if((meta.mts||0)>(cm.mts||0))userDoc().set(metaToCloud(meta),{merge:true}).catch(function(){});
   cloudLive=true;
+  dashKick(1500);
   listenList(uid);
   S.groups.forEach(function(g){if(g.cloud&&g.acct===uid)listenGroup(g);});
   cloudKick(0);
@@ -1061,6 +1062,21 @@ async function cloudReplace(){
   var keep=S.groups;await cloudWipe();
   keep.forEach(function(g){if(g.acct===cuser.uid){g.cloud=false;g.owner=null;g.acct=null;}g.pts=Date.now();});
   await persist();cloudConflict=null;await cloudStart();
+}
+
+/* ---------- Pixora Today dashboard ----------
+   A few numbers, encrypted on this phone to your own dashboard's key (see pixora-summary.js). */
+function dashKick(ms){
+  if(!window.PixoraSummary)return;
+  PixoraSummary.schedule("splitlog",function(){
+    if(!fdb||!cuser||!DEK||!S.ready)return null;
+    return {fdb:fdb,uid:cuser.uid,build:function(){
+      var mine=S.groups.filter(function(g){return !g.gone;}),groups=[];
+      mine.forEach(function(g){var me=C.myId(g);if(!me)return;var c=C.balances(g)[me]||0;groups.push({n:g.name,cur:g.currency||"CAD",net:c});});
+      groups.sort(function(a,b){return Math.abs(b.net)-Math.abs(a.net);});
+      return {d:today(),count:mine.length,totals:C.summary(mine),groups:groups.slice(0,5)};
+    }};
+  },ms);
 }
 
 /* ---------- invites ---------- */

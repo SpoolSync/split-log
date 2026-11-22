@@ -79,6 +79,7 @@ function idb(store,mode,fn){
   });});
 }
 function kvGet(k){return idb("kv","readonly",function(s){return s.get(k);});}
+var vaultV=1;function setMeta(m){vaultV=(m&&m.v)||1;return kvSet("meta",m);}
 function kvSet(k,v){return idb("kv","readwrite",function(s){return s.put(v,k);});}
 function wipeAll(){return idb("kv","readwrite",function(s){return s.clear();}).then(function(){return idb("images","readwrite",function(s){return s.clear();});});}
 function rnd(n){return crypto.getRandomValues(new Uint8Array(n));}
@@ -91,7 +92,7 @@ async function unseal(key,box){return new Uint8Array(await crypto.subtle.decrypt
 function importDek(raw){return crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt","decrypt"]);}
 async function createVault(pass){
   var salt=rnd(16),raw=rnd(32),k=await kek(pass,salt,ITER);
-  await kvSet("meta",{v:1,vid:rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});
+  await setMeta({v:1,vid:rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});
   DEK=await importDek(raw);raw.fill(0);S.groups=[];S.left={};await persist();
 }
 async function openVault(pass){
@@ -108,7 +109,7 @@ async function openWithKey(key){
 async function changePass(cur,next){
   var meta=await kvGet("meta"),raw=await unseal(await kek(cur,meta.salt,meta.iter),meta.wrapped);
   var salt=rnd(16),k=await kek(next,salt,ITER);
-  await kvSet("meta",{v:1,vid:meta.vid||rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});raw.fill(0);
+  await setMeta({v:1,vid:meta.vid||rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});raw.fill(0);
   cloudMetaPush().catch(function(){});
 }
 function persist(){
@@ -158,6 +159,7 @@ function drawHome(app){
       h("button",{type:"button",class:"btn quiet mini",text:"Join a group",onclick:function(){openJoin("");}}),
       h("button",{type:"button",class:"btn quiet mini",text:"Settings",onclick:function(){go("settings");}}))),
     statusChip());
+  var pc=pxCard();if(pc)app.append(pc);
   if(!S.groups.length){
     app.append(h("div",{class:"empty"},
       h("p",{text:"Start with a group: a trip, a household, a dinner. Add the people in it, then log who paid for what. Got an invite from a friend? Tap Join a group."}),
@@ -636,7 +638,21 @@ function drawSettings(app){
     h("p",{class:"small muted",text:"After you enter the passcode once, this phone stays unlocked and your phone's own lock protects it. Lock now asks for the passcode again next time."}),
     h("label",{class:"tog"},every,h("span",{text:"Ask for the passcode every time I open the app"})),
     h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:"Lock now",onclick:lock}))));
-  app.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pw("s-cur","Current passcode","current-password"),pw("s-new","New passcode","new-password"),pw("s-conf","Repeat new passcode","new-password"),pmsg,h("div",{class:"btnrow"},change)));
+  if(vaultV===2){
+    var qmsg=h("p",{class:"small",hidden:true}),pchange=h("button",{type:"button",class:"btn",text:"Change Pixora passcode",onclick:async function(){
+      var nw=$("s-new").value,bad=nw.length<4?"Use at least 4 characters. Six or more is much harder to guess.":nw!==$("s-conf").value?"The two new passcodes don't match.":!cuser?"Sign in to your Pixora account first.":"";
+      if(bad){say(qmsg,bad);return;}
+      pchange.disabled=true;
+      try{await pxChangePass($("s-cur").value,nw);$("s-cur").value=$("s-new").value=$("s-conf").value="";say(qmsg,"Pixora passcode changed for all your Pixora apps.");}
+      catch(e){say(qmsg,e&&e.code==="wrong"?"The current Pixora passcode is wrong.":"Couldn't reach your account. Try again.");}
+      pchange.disabled=false;
+    }});
+    app.append(h("div",{class:"panel"},h("h3",{text:"Pixora passcode"}),h("p",{class:"small muted",text:"Split Log opens with your Pixora passcode, the same one as your other Pixora apps. Changing it here changes it everywhere; other phones stay unlocked."}),
+      pw("s-cur","Current Pixora passcode","current-password"),pw("s-new","New Pixora passcode","new-password"),pw("s-conf","Repeat it","new-password"),qmsg,h("div",{class:"btnrow"},pchange)));
+  }else{
+    var sc=pxCard();if(sc)app.append(sc);
+    app.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pw("s-cur","Current passcode","current-password"),pw("s-new","New passcode","new-password"),pw("s-conf","Repeat new passcode","new-password"),pmsg,h("div",{class:"btnrow"},change)));
+  }
 
   app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),
     h("div",{class:"btnrow"},armed(h("button",{type:"button",class:"btn danger",text:"Erase everything"}),"Tap again to erase everything",eraseEverything))));
@@ -709,15 +725,17 @@ async function eraseEverything(){
 function showLock(mode,problem,src){
   lockMode=mode;eraseArmed=false;
   $("app").hidden=true;$("acct").hidden=true;$("lock").hidden=false;
-  $("lockTitle").textContent=mode==="setup"?"Set a passcode":"Enter your passcode";
+  var px=mode==="pxunlock"||mode==="pxnew",pxSet=mode==="pxnew"&&!pxHasMk;
+  $("lockTitle").textContent=px?(pxSet?"Set your Pixora passcode":"Enter your Pixora passcode"):mode==="setup"?"Set a passcode":"Enter your passcode";
   $("lockSub").textContent=src==="cloud"?(mode==="setup"?"Signed in. Now set a Split Log passcode. It encrypts your groups before they reach your Pixora account, so nobody else can read them. You type it once per phone.":"Your Pixora account already has Split Log data. Enter the Split Log passcode you set on your other phone."):
     mode==="setup"?"It encrypts every group and receipt on this phone. You type it once, then this phone stays unlocked. It can't be recovered if you forget it. Six or more characters is much harder to guess.":"Your splits are encrypted on this phone.";
-  $("l-confirmField").hidden=mode!=="setup";
+  if(px)$("lockSub").textContent=pxSet?"One passcode for every Pixora app. It encrypts your groups on this phone before they reach your account, so nobody else can read them. It can't be recovered, so pick one you'll remember.":"The same passcode you use in your other Pixora apps. You type it once on this phone.";
+  $("l-confirmField").hidden=!(mode==="setup"||pxSet);
   $("l-pass").value="";$("l-confirm").value="";
-  $("l-pass").setAttribute("autocomplete",mode==="setup"?"new-password":"current-password");
-  $("l-go").textContent=mode==="setup"?"Set passcode":"Unlock";$("l-go").disabled=!!problem;
+  $("l-pass").setAttribute("autocomplete",mode==="setup"||pxSet?"new-password":"current-password");
+  $("l-go").textContent=mode==="setup"||pxSet?"Set passcode":"Unlock";$("l-go").disabled=!!problem;
   var er=$("l-err");er.hidden=!problem;er.textContent=problem||"";
-  var x=$("l-erase");x.hidden=mode!=="unlock";x.textContent="Forgot it? Erase everything and start over";
+  var x=$("l-erase");x.hidden=!(mode==="unlock"||mode==="pxunlock");x.textContent="Forgot it? Erase everything and start over";
   $("l-acct").hidden=!(mode==="setup"&&!cuser&&src!=="cloud");
   if(!problem)try{$("l-pass").focus();}catch(e){}
 }
@@ -727,15 +745,24 @@ function lock(){
   kvSet("dek",null).catch(function(){});
   cloudStop();
   DEK=null;S.groups=[];S.left={};S.ready=false;closeDlg();$("app").textContent="";gkCache={};
-  showLock("unlock");
+  kvGet("meta").then(function(m){showLock(m&&m.v===2?"pxunlock":"unlock");});
 }
 $("lockForm").addEventListener("submit",async function(ev){
   ev.preventDefault();
   var pass=$("l-pass").value,er=$("l-err"),btn=$("l-go");
-  function fail(m){er.textContent=m;er.hidden=false;btn.disabled=false;btn.textContent=lockMode==="setup"?"Set passcode":"Unlock";}
-  er.hidden=true;btn.disabled=true;btn.textContent=lockMode==="setup"?"Setting up…":"Unlocking…";
+  var setting=lockMode==="setup"||(lockMode==="pxnew"&&!pxHasMk);
+  function fail(m){er.textContent=m;er.hidden=false;btn.disabled=false;btn.textContent=setting?"Set passcode":"Unlock";}
+  er.hidden=true;btn.disabled=true;btn.textContent=setting?"Setting up…":"Unlocking…";
   try{
-    if(lockMode==="setup"){
+    if(lockMode==="pxnew"){
+      if(!pxHasMk){
+        if(pass.length<4)return fail("Use at least 4 characters.");
+        if(pass!==$("l-confirm").value)return fail("The two passcodes don't match.");
+      }
+      try{await pxCreateVault(pass);}catch(e){return fail(e&&e.code==="wrong"?"That isn't your Pixora passcode.":"Couldn't reach your Pixora account. Check the connection and try again.");}
+    }else if(lockMode==="pxunlock"){
+      try{await pxOpenVault(pass);}catch(e){return fail(e&&e.code==="net"?"Connect to the internet once to unlock on this phone.":"That isn't your Pixora passcode.");}
+    }else if(lockMode==="setup"){
       if(pass.length<4)return fail("Use at least 4 characters.");
       if(pass!==$("l-confirm").value)return fail("The two passcodes don't match.");
       await createVault(pass);
@@ -825,8 +852,14 @@ async function sealJson(key,o){var b=await seal(key,utf8(JSON.stringify(o)));ret
 async function openJson(key,d){return JSON.parse(new TextDecoder().decode(await unseal(key,{iv:fromBytes(d.iv),ct:fromBytes(d.ct)})));}
 /* What the group stores to check invites: a one-way fingerprint of the invite secret, as lowercase hex. */
 async function joinHash(tok){return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",utf8(tok)))).map(function(b){return b.toString(16).padStart(2,"0");}).join("");}
-function metaToCloud(m){return {v:1,vid:m.vid,iter:m.iter,salt:toBytes(m.salt),wiv:toBytes(m.wrapped.iv),wct:toBytes(m.wrapped.ct),mts:m.mts||0};}
-function metaFromCloud(d){return {v:1,vid:d.vid,iter:d.iter,salt:fromBytes(d.salt),wrapped:{iv:fromBytes(d.wiv),ct:fromBytes(d.wct)},mts:d.mts||0};}
+function metaToCloud(m){
+  if(m.v===2)return {v:2,vid:m.vid,mts:m.mts||0,pmid:m.pk.mid,piv:toBytes(m.pk.iv),pct:toBytes(m.pk.ct)};
+  return {v:1,vid:m.vid,iter:m.iter,salt:toBytes(m.salt),wiv:toBytes(m.wrapped.iv),wct:toBytes(m.wrapped.ct),mts:m.mts||0};
+}
+function metaFromCloud(d){
+  if(d.v===2)return {v:2,vid:d.vid,mts:d.mts||0,pk:{mid:d.pmid,iv:fromBytes(d.piv),ct:fromBytes(d.pct)}};
+  return {v:1,vid:d.vid,iter:d.iter,salt:fromBytes(d.salt),wrapped:{iv:fromBytes(d.wiv),ct:fromBytes(d.wct)},mts:d.mts||0};
+}
 async function getCloudMeta(){var s=await userDoc().get();return s.exists&&s.data().vid?metaFromCloud(s.data()):null;}
 function setCloud(state,err){cloudState=state;cloudErr=err||"";if(state==="synced")lastSync=Date.now();paintCloud();}
 function statusText(){
@@ -847,7 +880,7 @@ async function cloudStart(){
   if(!fdb||!cuser||!DEK)return;
   cloudStop();setCloud("syncing");
   var uid=cuser.uid,meta=await kvGet("meta");
-  if(!meta.vid){meta.vid=rid();meta.mts=Date.now();await kvSet("meta",meta);}
+  if(!meta.vid){meta.vid=rid();meta.mts=Date.now();await setMeta(meta);}
   var cm;
   try{cm=await getCloudMeta();}catch(e){setCloud("offline");return;}
   if(!cuser||cuser.uid!==uid||!DEK)return;
@@ -857,7 +890,8 @@ async function cloudStart(){
   }
   if(cm.vid!==meta.vid){cloudConflict=cm;setCloud("conflict");if(S.ready)render();return;}
   cloudConflict=null;
-  if((cm.mts||0)>(meta.mts||0))await kvSet("meta",cm);
+  pxCheck(uid,meta);
+  if((cm.mts||0)>(meta.mts||0))await setMeta(cm);
   else if((meta.mts||0)>(cm.mts||0))userDoc().set(metaToCloud(meta),{merge:true}).catch(function(){});
   cloudLive=true;
   dashKick(1500);
@@ -1059,7 +1093,7 @@ async function cloudJoin(pass){
     var b=await seal(nk,await unseal(DEK,r));
     await idb("images","readwrite",function(s){return s.put({iv:b.iv,ct:b.ct,type:r.type},ids[i]);});
   }
-  DEK=nk;await kvSet("meta",cm);
+  DEK=nk;await setMeta(cm);
   S.groups.forEach(function(g){g.pts=Math.max(g.pts||0,Date.now());});
   await resetMarks();await persist();await rememberKey();cloudConflict=null;await cloudStart();
 }
@@ -1067,6 +1101,138 @@ async function cloudReplace(){
   var keep=S.groups;await cloudWipe();
   keep.forEach(function(g){if(g.acct===cuser.uid){g.cloud=false;g.owner=null;g.acct=null;}g.pts=Date.now();});
   await persist();cloudConflict=null;await cloudStart();
+}
+
+
+/* ---------- One Pixora passcode ----------
+   Same scheme as the other Pixora apps: a master secret kept in apps/pixora/users/<uid>, stored only
+   wrapped by the Pixora passcode. Split Log derives its own key from it (HKDF info "pixora-app:splitlog"),
+   so no other Pixora app can read Split Log data, and that key wraps the Split Log data key ("pk" in meta).
+   Phones without an account keep a Split Log passcode on that phone (meta v1). Group keys are separate:
+   they travel only in invites, so friends aren't affected by any of this. */
+var PX_ITER=600000,pxHasMk=false,pxNeed=null,pxArm=false;
+function masterDoc(){return fdb.doc("apps/pixora/users/"+cuser.uid);}
+async function getMk(){var s=await masterDoc().get();var m=s.exists?s.data().mk:null;return m&&m.id?m:null;}
+async function pxAppKey(m){
+  var base=await crypto.subtle.importKey("raw",m,"HKDF",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"HKDF",hash:"SHA-256",salt:utf8("pixora"),info:utf8("pixora-app:splitlog")},base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function pxMaster(pass,mk){
+  var k=await kek(pass,unb64(mk.salt),Math.min(Math.max(+mk.iter||PX_ITER,100000),2000000));
+  var o=JSON.parse(new TextDecoder().decode(await unseal(k,{iv:unb64(mk.iv),ct:unb64(mk.ct)})));
+  return unb64(o.m);
+}
+async function pxWrapMaster(pass,m,id){
+  var salt=rnd(16),b=await seal(await kek(pass,salt,PX_ITER),utf8(JSON.stringify({m:b64(m)})));
+  return {v:1,id:id,salt:b64(salt),iter:PX_ITER,iv:b64(b.iv),ct:b64(b.ct)};
+}
+/* The app key from the typed Pixora passcode; sets up the Pixora passcode if the account has none yet. */
+async function pxKey(pass){
+  var mk=await getMk();
+  if(!mk){var m=rnd(32),id=b64(rnd(9)).replace(/[+/=]/g,"");mk=await pxWrapMaster(pass,m,id);await masterDoc().set({mk:mk},{merge:true});
+    var ak0=await pxAppKey(m);m.fill(0);await kvSet("mk",mk);T("px_passcode_set");return {ak:ak0,mk:mk};}
+  var raw;try{raw=await pxMaster(pass,mk);}catch(e){throw {code:"wrong"};}
+  var ak=await pxAppKey(raw);raw.fill(0);await kvSet("mk",mk);return {ak:ak,mk:mk};
+}
+async function resealImages(nk){
+  var ids=await idb("images","readonly",function(s){return s.getAllKeys();});
+  for(var i=0;i<ids.length;i++){
+    var r=await idb("images","readonly",function(s){return s.get(ids[i]);});if(!r)continue;
+    try{var b=await seal(nk,await unseal(DEK,r));await idb("images","readwrite",function(s){return s.put({iv:b.iv,ct:b.ct,type:r.type},ids[i]);});}catch(e){}
+  }
+}
+/* New Split Log on a signed-in phone, locked with the Pixora passcode. */
+async function pxCreateVault(pass){
+  var r=await pxKey(pass),raw=rnd(32),pk=await seal(r.ak,raw);
+  await setMeta({v:2,vid:rid(),mts:Date.now(),pk:{mid:r.mk.id,iv:pk.iv,ct:pk.ct}});
+  DEK=await importDek(raw);raw.fill(0);S.groups=[];S.left={};await persist();
+}
+/* Unlock with the Pixora passcode. Works offline once this phone has seen the account's passcode record. */
+async function pxOpenVault(pass){
+  var meta=await kvGet("meta"),mk=null,cached=await kvGet("mk").catch(function(){return null;});
+  try{await cloudInit();if(fdb&&cuser)mk=await getMk();}catch(e){}
+  if(!mk||mk.id!==meta.pk.mid)mk=cached&&cached.id===meta.pk.mid?cached:mk;
+  if(!mk)throw {code:"net"};
+  var m;try{m=await pxMaster(pass,mk);}catch(e){throw {code:"wrong"};}
+  var ak=await pxAppKey(m);m.fill(0);
+  var raw=await unseal(ak,meta.pk),key=await importDek(raw);raw.fill(0);
+  await openWithKey(key);
+}
+/* Re-lock this phone's Split Log with the Pixora passcode: a fresh data key, receipt photos re-encrypted,
+   and the account's copy replaced. Moves off the old Split Log passcode, or catches up after a Pixora passcode reset. */
+async function pxRekey(ak,mid){
+  var raw=rnd(32),nk=await importDek(raw),pk=await seal(ak,raw);raw.fill(0);
+  await resealImages(nk);
+  DEK=nk;var meta={v:2,vid:rid(),mts:Date.now(),pk:{mid:mid,iv:pk.iv,ct:pk.ct}};await setMeta(meta);
+  S.groups.forEach(function(g){g.pts=Math.max(g.pts||0,Date.now());});
+  await persist();await rememberKey();
+  if(fdb&&cuser){cloudStop();await userDoc().set(Object.assign(metaToCloud(meta),{at:sts()}));await resetMarks();}
+  pxNeed=null;cloudConflict=null;T("px_relock");
+  if(fdb&&cuser)await cloudStart();
+}
+/* The account holds a Split Log locked with the Pixora passcode from another phone: take its key and combine. */
+async function pxAdopt(ak){
+  var cm=cloudConflict,raw=await unseal(ak,cm.pk),nk=await importDek(raw);raw.fill(0);
+  await resealImages(nk);
+  DEK=nk;await setMeta(cm);
+  S.groups.forEach(function(g){g.pts=Math.max(g.pts||0,Date.now());});
+  await resetMarks();await persist();await rememberKey();cloudConflict=null;pxNeed=null;T("px_combine");await cloudStart();
+}
+/* Signed in: still on the old passcode, or the Pixora passcode was reset in another app? */
+async function pxCheck(uid,meta){
+  var need=null;
+  try{
+    if(meta.v!==2){var mk0=await getMk();need={why:"switch",mk:mk0};}
+    else{var mk=await getMk();if(!mk||mk.id!==meta.pk.mid)need={why:"reset",mk:mk};else kvSet("mk",mk).catch(function(){});}
+  }catch(e){return;}
+  if(!cuser||cuser.uid!==uid)return;
+  var was=JSON.stringify(pxNeed&&pxNeed.why);pxNeed=need;
+  if(S.ready&&JSON.stringify(need&&need.why)!==was)render();
+}
+async function pxChangePass(cur,nw){
+  var mk=await getMk();if(!mk)throw {code:"nomk"};
+  var m;try{m=await pxMaster(cur,mk);}catch(e){throw {code:"wrong"};}
+  var nmk=await pxWrapMaster(nw,m,mk.id);m.fill(0);
+  await masterDoc().set({mk:nmk},{merge:true});await kvSet("mk",nmk);T("px_passcode_change");
+}
+/* The card that asks for the Pixora passcode once. */
+function pxCard(){
+  var conflict=cloudConflict&&cloudConflict.v===2,need=pxNeed;
+  if(!conflict&&!need)return null;
+  var setting=!conflict&&need&&!need.mk;
+  var title=conflict?"Combine with your account":need.why==="reset"?"Enter your new Pixora passcode":setting?"Set your Pixora passcode":"Switch to your Pixora passcode";
+  var text=conflict?"Your Pixora account already has Split Log from another phone. Enter your Pixora passcode to combine it with this phone. Nothing is lost on either side."
+    :need.why==="reset"?"Your Pixora passcode was changed or reset in another Pixora app. Enter the current one so this phone keeps syncing."
+    :setting?"Split Log now uses one Pixora passcode, shared with your other Pixora apps. Set it once here and your old Split Log passcode is retired."
+    :"Split Log now uses your Pixora passcode, the same as your other Pixora apps. Enter it once and your old Split Log passcode is retired. Friends and shared groups aren't affected.";
+  var msg=h("p",{class:"err",role:"alert",hidden:true});
+  var p1=h("input",{type:"password",id:"px-p1",autocomplete:setting?"new-password":"current-password"});
+  var p2=setting?h("input",{type:"password",id:"px-p2",autocomplete:"new-password"}):null;
+  var go=h("button",{type:"submit",class:"btn primary",text:setting?"Set passcode":"Continue"});
+  var f=h("form",{class:"panel pxcard",novalidate:true},h("h3",{text:title}),h("p",{class:"small",text:text}),
+    h("div",{class:"field"},h("label",{for:"px-p1",text:"Pixora passcode"}),p1),
+    p2?h("div",{class:"field"},h("label",{for:"px-p2",text:"Repeat it"}),p2):null,msg,h("div",{class:"btnrow"},go));
+  f.addEventListener("submit",async function(ev){
+    ev.preventDefault();msg.hidden=true;
+    if(setting&&p1.value.length<4){msg.textContent="Use at least 4 characters. Six or more is much harder to guess.";msg.hidden=false;return;}
+    if(setting&&p1.value!==p2.value){msg.textContent="The two passcodes don't match.";msg.hidden=false;return;}
+    go.disabled=true;go.textContent="Working…";
+    try{
+      var r=await pxKey(p1.value);
+      if(conflict){
+        if(cloudConflict.pk.mid!==r.mk.id)throw {code:"stale"};
+        await pxAdopt(r.ak);toast("Combined. This phone and your account now match.");
+      }else{await pxRekey(r.ak,r.mk.id);toast("Done. Split Log now opens with your Pixora passcode.");}
+      render();
+    }catch(e){
+      go.disabled=false;go.textContent=setting?"Set passcode":"Continue";
+      msg.textContent=e&&e.code==="wrong"?"That isn't your Pixora passcode.":e&&e.code==="stale"?"The Split Log copy in your account was locked before your Pixora passcode was reset, so nothing can open it. Replace it with this phone's groups below.":navigator.onLine===false?"No connection. Connect and try again.":"Something went wrong. Try again.";
+      msg.hidden=false;
+      if(e&&e.code==="stale"&&!f.querySelector(".pxreplace"))f.append(h("div",{class:"btnrow pxreplace"},h("button",{type:"button",class:"btn danger",text:"Replace the account's Split Log list with this phone's",onclick:async function(){
+        try{await cloudReplace();render();}catch(x){toast("Couldn't reach your account. Try again.");}}})));
+    }
+  });
+  return f;
 }
 
 /* ---------- Pixora Today dashboard ----------
@@ -1209,8 +1375,8 @@ async function routeSignedIn(){
   var cm=null;
   try{cm=await getCloudMeta();}
   catch(e){showAccount("Couldn't reach your Pixora account. Check the connection and sign in again.");return;}
-  if(cm){await kvSet("meta",cm);showLock("unlock",null,"cloud");}
-  else showLock("setup",null,"cloud");
+  if(cm){await setMeta(cm);showLock(cm.v===2?"pxunlock":"unlock",null,"cloud");}
+  else{var mk=null;try{mk=await getMk();}catch(e){}pxHasMk=!!mk;showLock("pxnew",null,"cloud");}
 }
 function cloudPanel(){
   var p=h("div",{class:"panel"},h("h3",{text:"Pixora account"}));
@@ -1221,7 +1387,9 @@ function cloudPanel(){
     return p;
   }
   p.append(h("p",{class:"small",text:"Signed in as "+(cuser.email||"your Pixora account")+"."}));
-  if(cloudState==="conflict"){
+  if(cloudState==="conflict"&&cloudConflict&&cloudConflict.v===2){
+    p.append(pxCard());
+  }else if(cloudState==="conflict"){
     var msg=h("p",{class:"err",role:"alert",hidden:true});
     p.append(h("p",{class:"small",style:"font-weight:600",text:"This account already has Split Log data from another phone, protected by a different passcode. Enter that passcode to combine it with what's on this phone."}),
       pw("s-joinpw","Passcode from your other phone","current-password"),msg);
@@ -1259,12 +1427,12 @@ async function start(){
   if(!window.isSecureContext||!window.crypto||!crypto.subtle||!window.indexedDB){showLock("setup","This app needs to be opened from its https address to encrypt your data.");return;}
   try{
     var meta=await kvGet("meta"),saved=null;
-    if(meta){
+    if(meta){vaultV=meta.v||1;
       try{keepOn=(await kvGet("keep"))!==false;if(keepOn)saved=await kvGet("dek");}catch(e){saved=null;}
       if(saved){try{await openWithKey(saved);await enterApp();}catch(e){DEK=null;saved=null;kvSet("dek",null).catch(function(){});}}
     }
     if(!saved){
-      if(meta)showLock("unlock");
+      if(meta)showLock(meta.v===2?"pxunlock":"unlock");
       else{var u0=await cloudInit();if(u0)await routeSignedIn();else showAccount();}
     }
   }catch(e){showLock("setup","Storage is blocked here. Turn off Private Browsing, then open the app again.");}
@@ -1275,7 +1443,7 @@ async function start(){
     try{var s=hash.slice(3).replace(/-/g,"+").replace(/_/g,"/");snap=C.cleanSnapshot(JSON.parse(new TextDecoder().decode(unb64(s))));}catch(e){}
   }
   if(hash.slice(0,6)==="#join="){pendingJoin=hash.slice(6);history.replaceState(null,"",location.pathname+location.search);}
-  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v4",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v5",function(){return fdb&&cuser?fdb:null;});
   if(snap){T("view_only_link_opened");showShared(snap,start);}else start();
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
 })();

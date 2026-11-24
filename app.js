@@ -654,6 +654,8 @@ function drawSettings(app){
     app.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pw("s-cur","Current passcode","current-password"),pw("s-new","New passcode","new-password"),pw("s-conf","Repeat new passcode","new-password"),pmsg,h("div",{class:"btnrow"},change)));
   }
 
+  app.append(h("div",{class:"panel"},h("h3",{text:"Ideas or problems?"}),h("p",{class:"small muted",text:"Tell Sachin what would make Split Log better or what went wrong. Nothing from your groups is sent."}),
+    h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",text:"Send feedback",onclick:function(){if(window.PixoraFeedback)PixoraFeedback.open("splitlog","Split Log");}}))));
   app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),
     h("div",{class:"btnrow"},armed(h("button",{type:"button",class:"btn danger",text:"Erase everything"}),"Tap again to erase everything",eraseEverything))));
 }
@@ -1443,7 +1445,7 @@ async function start(){
     try{var s=hash.slice(3).replace(/-/g,"+").replace(/_/g,"/");snap=C.cleanSnapshot(JSON.parse(new TextDecoder().decode(unb64(s))));}catch(e){}
   }
   if(hash.slice(0,6)==="#join="){pendingJoin=hash.slice(6);history.replaceState(null,"",location.pathname+location.search);}
-  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v5",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v6",function(){return fdb&&cuser?fdb:null;});
   if(snap){T("view_only_link_opened");showShared(snap,start);}else start();
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
 })();

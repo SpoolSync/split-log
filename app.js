@@ -221,6 +221,13 @@ function drawGroup(app,g){
 
   var acts=g.expenses.map(function(e){return {t:"e",d:e.date,at:e.createdAt||0,x:e};}).concat(g.settlements.map(function(s){return {t:"s",d:s.date,at:s.createdAt||0,x:s};}));
   acts.sort(function(a,b){return b.d.localeCompare(a.d)||b.at-a.at;});
+  if(acts.length>6){
+    var q=h("input",{type:"search",placeholder:"Search this group",value:groupQ[g.id]||"","aria-label":"Search this group",style:"width:100%"});
+    q.addEventListener("input",function(){groupQ[g.id]=q.value;clearTimeout(q._t);q._t=setTimeout(function(){var p=q.selectionStart;render();var n=document.querySelector("input[type=search]");if(n){n.focus();try{n.setSelectionRange(p,p);}catch(x){}}T("search");},250);});
+    app.append(q);
+    var qs=(groupQ[g.id]||"").trim().toLowerCase();
+    if(qs)acts=acts.filter(function(a){var x=a.x,txt=a.t==="s"?[nm(g,x.from),nm(g,x.to),x.method,x.note,plain(x.cents)]:[x.desc,x.cat,x.note,plain(x.cents)].concat(Object.keys(x.payers).map(function(id){return nm(g,id);}));return txt.join(" ").toLowerCase().indexOf(qs)>=0;});
+  }
   var list=h("section",{class:"list","aria-label":"Activity"}),last="";
   if(!acts.length)list.append(h("div",{class:"empty"},h("p",{text:"Nothing logged yet. Add the first expense and the balances fill in above."})));
   acts.forEach(function(a){
@@ -243,6 +250,37 @@ function drawGroup(app,g){
       chips.childNodes.length?chips:null));
   });
   app.append(list);
+}
+
+var groupQ={};
+/* ---------- paid in another currency ----------
+   Daily rates come from the same public file as Investments' prices (/invest/prices.json, CAD per unit).
+   The converted total goes in the Total, and the original amount and rate go in the note, so everyone in
+   the group sees how it was worked out. */
+var FX=null,FXP=null;
+function loadFx(){if(FXP)return FXP;FXP=fetch("/invest/prices.json",{cache:"no-cache"}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j&&j.fx){FX={d:j.d,cad:Object.assign({CAD:1},j.fx.CAD||{},j.fx.USDCAD?{USD:j.fx.USDCAD}:{})};}return FX;}).catch(function(){FXP=null;return null;});return FXP;}
+var FXNAMES=["USD","EUR","GBP","INR","AUD","NZD","MXN","JPY","CNY","HKD","SGD","AED","CHF","SEK","NOK","DKK","PLN","KRW","THB","PHP","VND","IDR","MYR","BRL","ZAR","TRY","EGP","MAD","DOP","JMD","CRC","COP","PEN","CLP","ARS","ILS","SAR","QAR","PKR","LKR","BDT","NPR","KES","NGN","CAD"];
+function fxBox(cur,apply,getNote){
+  var box=h("div",{class:"field"}),open=false,sel,amt,out;
+  function draw(){
+    box.textContent="";
+    if(!open){box.append(h("button",{type:"button",class:"btn quiet mini",text:"Paid in another currency?",onclick:function(){open=true;draw();loadFx().then(calc);T("fx_open");}}));return;}
+    sel=select(FXNAMES.filter(function(c){return c!==cur;}),cur==="USD"?"EUR":"USD",calc);sel.setAttribute("aria-label","Currency it was paid in");
+    amt=h("input",{type:"text",inputmode:"decimal",placeholder:"Amount paid","aria-label":"Amount in that currency"});amt.addEventListener("input",calc);
+    out=h("p",{class:"hint","aria-live":"polite"});
+    box.append(h("span",{class:"lab",text:"Paid in another currency"}),h("div",{class:"two"},sel,amt),out);
+  }
+  function calc(){
+    if(!out)return;var c=sel.value,a=num(amt.value);
+    if(!FX){out.textContent="Getting today's rates…";loadFx().then(function(f){if(f)calc();else out.textContent="Couldn't get rates. Connect once, or type the converted total yourself.";});return;}
+    var rx=FX.cad[c],rg=FX.cad[cur];if(!rx||!rg){out.textContent="No rate for "+c+" today. Type the converted total yourself.";return;}
+    var rate=rx/rg;if(!(a>0)){out.textContent="1 "+c+" = "+(Math.round(rate*10000)/10000)+" "+cur+" (rate from "+FX.d+")";return;}
+    var total=(Math.round(a*rate*100)/100).toFixed(2),tag=c+" "+a.toFixed(2)+" at "+(Math.round(rate*10000)/10000)+" ("+FX.d+")";
+    out.textContent="= "+money(Math.round(a*rate*100),cur)+" · put in the total, and the original amount in the note.";
+    var note=(getNote()||"").replace(/\s*·?\s*[A-Z]{3} [\d.]+ at [\d.]+ \(\d{4}-\d{2}-\d{2}\)\s*$/,"");
+    apply(total,(note?note+" · ":"")+tag);T("fx_convert");
+  }
+  draw();return box;
 }
 
 /* ---------- dialogs ---------- */
@@ -384,6 +422,7 @@ function openExpense(g,e){
     h("div",{class:"two"},
       field("Total ("+cur+")",input({type:"text",inputmode:"decimal",placeholder:"0.00"},D.amount,function(v){D.amount=v;refresh();}),"e-amt"),
       field("Date",input({type:"date"},D.date,function(v){D.date=v;}),"e-date")),
+    fxBox(cur,function(total,note){D.amount=total;var el=$("e-amt");if(el)el.value=total;D.note=note;var nt=$("e-note");if(nt)nt.value=note;refresh();},function(){return D.note;}),
     payBox,splitBox,
     field("Category",select([["","None"]].concat(CATS),D.cat,function(v){D.cat=v;}),"e-cat"),
     field("Note",input({type:"text",maxlength:"200"},D.note,function(v){D.note=v;}),"e-note"),
@@ -1445,7 +1484,7 @@ async function start(){
     try{var s=hash.slice(3).replace(/-/g,"+").replace(/_/g,"/");snap=C.cleanSnapshot(JSON.parse(new TextDecoder().decode(unb64(s))));}catch(e){}
   }
   if(hash.slice(0,6)==="#join="){pendingJoin=hash.slice(6);history.replaceState(null,"",location.pathname+location.search);}
-  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v6",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("splitlog","splitlog-v7",function(){return fdb&&cuser?fdb:null;});
   if(snap){T("view_only_link_opened");showShared(snap,start);}else start();
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
 })();

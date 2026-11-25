@@ -668,7 +668,7 @@ function drawSettings(app){
 
   /* passcode */
   var pmsg=h("p",{class:"small",hidden:true}),change=h("button",{type:"button",class:"btn",text:"Change passcode",onclick:async function(){
-    var nw=$("s-new").value,bad=nw.length<4?"Use at least 4 characters. Six or more is much harder to guess.":nw!==$("s-conf").value?"The two new passcodes don't match.":"";
+    var nw=$("s-new").value,bad=!/^\d{4}$/.test(nw)?"The new passcode must be exactly 4 digits.":nw!==$("s-conf").value?"The two new passcodes don't match.":"";
     if(bad){say(pmsg,bad);return;}
     change.disabled=true;
     try{await changePass($("s-cur").value,nw);$("s-cur").value=$("s-new").value=$("s-conf").value="";say(pmsg,"Passcode changed.");}
@@ -683,7 +683,7 @@ function drawSettings(app){
     h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:"Lock now",onclick:lock}))));
   if(vaultV===2){
     var qmsg=h("p",{class:"small",hidden:true}),pchange=h("button",{type:"button",class:"btn",text:"Change Pixora passcode",onclick:async function(){
-      var nw=$("s-new").value,bad=nw.length<4?"Use at least 4 characters. Six or more is much harder to guess.":nw!==$("s-conf").value?"The two new passcodes don't match.":!cuser?"Sign in to your Pixora account first.":"";
+      var nw=$("s-new").value,bad=!/^\d{4}$/.test(nw)?"The new passcode must be exactly 4 digits.":nw!==$("s-conf").value?"The two new passcodes don't match.":!cuser?"Sign in to your Pixora account first.":"";
       if(bad){say(qmsg,bad);return;}
       pchange.disabled=true;
       try{await pxChangePass($("s-cur").value,nw);$("s-cur").value=$("s-new").value=$("s-conf").value="";say(qmsg,"Pixora passcode changed for all your Pixora apps.");}
@@ -771,6 +771,8 @@ async function eraseEverything(){
   if(cuser)showLock("setup",null,"cloud");else showAccount();
 }
 function showLock(mode,problem,src){
+  if(window.PixoraPin){var lp=$("l-pass"),lc=$("l-confirm"),pinSet=mode==="setup"||(mode==="pxnew"&&!pxHasMk);
+    if(pinSet){PixoraPin.fit(lp,null,true);PixoraPin.fit(lc,null,true);}else if(mode==="pxunlock")kvGet("mk").then(function(mk){PixoraPin.fit(lp,mk,false);}).catch(function(){});else{PixoraPin.fit(lp,null,false);PixoraPin.fit(lc,null,false);}}
   lockMode=mode;eraseArmed=false;
   $("app").hidden=true;$("acct").hidden=true;$("lock").hidden=false;
   var px=mode==="pxunlock"||mode==="pxnew",pxSet=mode==="pxnew"&&!pxHasMk;
@@ -804,14 +806,14 @@ $("lockForm").addEventListener("submit",async function(ev){
   try{
     if(lockMode==="pxnew"){
       if(!pxHasMk){
-        if(pass.length<4)return fail("Use at least 4 characters.");
+        if(!/^\d{4}$/.test(pass))return fail("Use exactly 4 digits.");
         if(pass!==$("l-confirm").value)return fail("The two passcodes don't match.");
       }
       try{await pxCreateVault(pass);}catch(e){return fail(e&&e.code==="wrong"?"That isn't your Pixora passcode.":"Couldn't reach your Pixora account. Check the connection and try again.");}
     }else if(lockMode==="pxunlock"){
       try{await pxOpenVault(pass);}catch(e){return fail(e&&e.code==="net"?"Connect to the internet once to unlock on this phone.":"That isn't your Pixora passcode.");}
     }else if(lockMode==="setup"){
-      if(pass.length<4)return fail("Use at least 4 characters.");
+      if(!/^\d{4}$/.test(pass))return fail("Use exactly 4 digits.");
       if(pass!==$("l-confirm").value)return fail("The two passcodes don't match.");
       await createVault(pass);
     }else{
@@ -846,7 +848,8 @@ async function enterApp(){
   render();
   if(added)toast(added+" monthly expense"+(added===1?"":"s")+" added.");
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
-  cloudInit().then(function(){paintCloud();if(cuser)cloudStart();if(pendingJoin){var c=pendingJoin;pendingJoin=null;openJoin(c);}});
+  cloudInit().then(function(){paintCloud();if(cuser)cloudStart();if(pendingJoin){var c=pendingJoin;pendingJoin=null;openJoin(c);}
+    if(cuser&&vaultV===2&&window.PixoraPin){var lp=lastPass;lastPass="";PixoraPin.check({fdb:fdb,uid:cuser.uid,cur:lp,onDone:function(n){kvSet("mk",n).catch(function(){});toast("Your Pixora passcode is now 4 digits, for every app.");}});}});
 }
 document.addEventListener("visibilitychange",function(){
   if(document.hidden)hiddenAt=Date.now();
@@ -1158,7 +1161,7 @@ async function cloudReplace(){
    so no other Pixora app can read Split Log data, and that key wraps the Split Log data key ("pk" in meta).
    Phones without an account keep a Split Log passcode on that phone (meta v1). Group keys are separate:
    they travel only in invites, so friends aren't affected by any of this. */
-var PX_ITER=600000,pxHasMk=false,pxNeed=null,pxArm=false;
+var PX_ITER=600000,pxHasMk=false,pxNeed=null,pxArm=false,lastPass="";
 function masterDoc(){return fdb.doc("apps/pixora/users/"+cuser.uid);}
 async function getMk(){var s=await masterDoc().get();var m=s.exists?s.data().mk:null;return m&&m.id?m:null;}
 async function pxAppKey(m){
@@ -1172,14 +1175,16 @@ async function pxMaster(pass,mk){
 }
 async function pxWrapMaster(pass,m,id){
   var salt=rnd(16),b=await seal(await kek(pass,salt,PX_ITER),utf8(JSON.stringify({m:b64(m)})));
-  return {v:1,id:id,salt:b64(salt),iter:PX_ITER,iv:b64(b.iv),ct:b64(b.ct)};
+  var out={v:1,id:id,salt:b64(salt),iter:PX_ITER,iv:b64(b.iv),ct:b64(b.ct)};if(/^\d{4}$/.test(pass))out.fmt="pin4";return out;
 }
 /* The app key from the typed Pixora passcode; sets up the Pixora passcode if the account has none yet. */
 async function pxKey(pass){
   var mk=await getMk();
   if(!mk){var m=rnd(32),id=b64(rnd(9)).replace(/[+/=]/g,"");mk=await pxWrapMaster(pass,m,id);await masterDoc().set({mk:mk},{merge:true});
+    if(window.PixoraPin)await PixoraPin.remember(m,id);
     var ak0=await pxAppKey(m);m.fill(0);await kvSet("mk",mk);T("px_passcode_set");return {ak:ak0,mk:mk};}
   var raw;try{raw=await pxMaster(pass,mk);}catch(e){throw {code:"wrong"};}
+  if(window.PixoraPin)await PixoraPin.remember(raw,mk.id);lastPass=pass;
   var ak=await pxAppKey(raw);raw.fill(0);await kvSet("mk",mk);return {ak:ak,mk:mk};
 }
 async function resealImages(nk){
@@ -1202,6 +1207,7 @@ async function pxOpenVault(pass){
   if(!mk||mk.id!==meta.pk.mid)mk=cached&&cached.id===meta.pk.mid?cached:mk;
   if(!mk)throw {code:"net"};
   var m;try{m=await pxMaster(pass,mk);}catch(e){throw {code:"wrong"};}
+  if(window.PixoraPin)await PixoraPin.remember(m,mk.id);lastPass=pass;
   var ak=await pxAppKey(m);m.fill(0);
   var raw=await unseal(ak,meta.pk),key=await importDek(raw);raw.fill(0);
   await openWithKey(key);
@@ -1262,7 +1268,7 @@ function pxCard(){
     p2?h("div",{class:"field"},h("label",{for:"px-p2",text:"Repeat it"}),p2):null,msg,h("div",{class:"btnrow"},go));
   f.addEventListener("submit",async function(ev){
     ev.preventDefault();msg.hidden=true;
-    if(setting&&p1.value.length<4){msg.textContent="Use at least 4 characters. Six or more is much harder to guess.";msg.hidden=false;return;}
+    if(setting&&!/^\d{4}$/.test(p1.value)){msg.textContent="Use exactly 4 digits.";msg.hidden=false;return;}
     if(setting&&p1.value!==p2.value){msg.textContent="The two passcodes don't match.";msg.hidden=false;return;}
     go.disabled=true;go.textContent="Working…";
     try{
@@ -1478,6 +1484,9 @@ async function start(){
     if(meta){vaultV=meta.v||1;
       try{keepOn=(await kvGet("keep"))!==false;if(keepOn)saved=await kvGet("dek");}catch(e){saved=null;}
       if(saved){try{await openWithKey(saved);await enterApp();}catch(e){DEK=null;saved=null;kvSet("dek",null).catch(function(){});}}
+    }
+    if(!saved&&meta&&meta.v===2&&keepOn&&meta.pk&&window.PixoraPin){
+      try{var sak=await PixoraPin.recall(meta.pk.mid,"splitlog");if(sak){var sraw=await unseal(sak,meta.pk),skey=await importDek(sraw);sraw.fill(0);await openWithKey(skey);await rememberKey();T("unlock_shared");await enterApp();saved=true;}}catch(e){DEK=null;}
     }
     if(!saved){
       if(meta)showLock(meta.v===2?"pxunlock":"unlock");

@@ -29,7 +29,7 @@ function today(){var d=new Date();return d.getFullYear()+"-"+z(d.getMonth()+1)+"
 function dayLabel(s){var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(LOC(),{weekday:"short",month:"short",day:"numeric",year:"numeric"});}
 function rid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
 var fmts={};
-/* Pixora country (Canada, US or India): home currency for new groups, money and date format. */
+/* Pixora country (Canada, US, UK or India): home currency for new groups, money and date format. */
 var PCY=window.PixoraCountry;
 function LOC(){return PCY?PCY.locale():"en-CA";}
 function homeCur(){return PCY?PCY.info().cur:"CAD";}
@@ -699,7 +699,7 @@ function drawSettings(app){
 
   if(PCY){var csel=h("select",{"aria-label":"Country",style:"max-width:280px;min-height:44px"});PCY.LIST.forEach(function(c){var o=h("option",{value:c[0],text:PCY.INFO[c[0]].flag+" "+c[1]});if(c[0]===PCY.get())o.selected=true;csel.append(o);});
     csel.addEventListener("change",function(){PCY.set(csel.value);toast("New groups will use "+homeCur()+". Existing groups keep their currency.");});
-    app.append(h("div",{class:"panel"},h("h3",{text:"Country"}),h("p",{class:"small muted",text:"Canada, the US or India: the currency new groups start in and how money and dates look, here and in every Pixora app."}),csel));}
+    app.append(h("div",{class:"panel"},h("h3",{text:"Country"}),h("p",{class:"small muted",text:"Canada, the US, the UK or India: the currency new groups start in and how money and dates look, here and in every Pixora app."}),csel));}
   app.append(h("div",{class:"panel"},h("h3",{text:"Ideas or problems?"}),h("p",{class:"small muted",text:"Tell Sachin what would make Split Log better or what went wrong. Nothing from your groups is sent."}),
     h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",text:"Send feedback",onclick:function(){if(window.PixoraFeedback)PixoraFeedback.open("splitlog","Split Log");}}))));
   app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),

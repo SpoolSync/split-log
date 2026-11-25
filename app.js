@@ -26,10 +26,14 @@ function h(tag,attrs){
 function add(el,c){if(c==null||c===false)return;if(Array.isArray(c)){c.forEach(function(x){add(el,x);});return;}el.append(c.nodeType?c:document.createTextNode(String(c)));}
 function z(n){return String(n).padStart(2,"0");}
 function today(){var d=new Date();return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate());}
-function dayLabel(s){var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric",year:"numeric"});}
+function dayLabel(s){var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(LOC(),{weekday:"short",month:"short",day:"numeric",year:"numeric"});}
 function rid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
 var fmts={};
-function money(c,cur){cur=cur||"CAD";if(!fmts[cur])fmts[cur]=new Intl.NumberFormat("en-CA",{style:"currency",currency:cur});return fmts[cur].format((c||0)/100);}
+/* Pixora country (Canada, US or India): home currency for new groups, money and date format. */
+var PCY=window.PixoraCountry;
+function LOC(){return PCY?PCY.locale():"en-CA";}
+function homeCur(){return PCY?PCY.info().cur:"CAD";}
+function money(c,cur){cur=cur||homeCur();if(PCY)return PCY.money((c||0)/100,{cur:cur,dec:2});if(!fmts[cur])fmts[cur]=new Intl.NumberFormat("en-CA",{style:"currency",currency:cur});return fmts[cur].format((c||0)/100);}
 /* "12.50" -> 1250. Blank counts as zero. Anything odd is NaN so the form can say so. */
 function cents(s){s=String(s==null?"":s).replace(/[$,\s]/g,"");if(s==="")return 0;if(!/^\d*(\.\d{0,2})?$/.test(s)||s===".")return NaN;return Math.round(parseFloat(s)*100);}
 function num(s){s=String(s==null?"":s).replace(/[%\s]/g,"");if(s==="")return 0;if(!/^\d*(\.\d*)?$/.test(s)||s===".")return NaN;return parseFloat(s);}
@@ -477,7 +481,7 @@ function usedIds(g){
   return u;
 }
 function openGroup(g,note){
-  var used=g?usedIds(g):{},D={name:g?g.name:"",currency:g?g.currency:"CAD",members:g?g.members.map(function(m){return {id:m.id,name:m.name,me:m.id===C.myId(g)};}):[{id:rid(),name:"",me:true},{id:rid(),name:"",me:false}]};
+  var used=g?usedIds(g):{},D={name:g?g.name:"",currency:g?g.currency:homeCur(),members:g?g.members.map(function(m){return {id:m.id,name:m.name,me:m.id===C.myId(g)};}):[{id:rid(),name:"",me:true},{id:rid(),name:"",me:false}]};
   var box=h("div",{class:"field"}),err=h("p",{class:"err",role:"alert",hidden:true});
   function draw(){
     box.textContent="";box.append(h("span",{class:"lab",text:"People"}));
@@ -693,6 +697,9 @@ function drawSettings(app){
     app.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pw("s-cur","Current passcode","current-password"),pw("s-new","New passcode","new-password"),pw("s-conf","Repeat new passcode","new-password"),pmsg,h("div",{class:"btnrow"},change)));
   }
 
+  if(PCY){var csel=h("select",{"aria-label":"Country",style:"max-width:280px;min-height:44px"});PCY.LIST.forEach(function(c){var o=h("option",{value:c[0],text:PCY.INFO[c[0]].flag+" "+c[1]});if(c[0]===PCY.get())o.selected=true;csel.append(o);});
+    csel.addEventListener("change",function(){PCY.set(csel.value);toast("New groups will use "+homeCur()+". Existing groups keep their currency.");});
+    app.append(h("div",{class:"panel"},h("h3",{text:"Country"}),h("p",{class:"small muted",text:"Canada, the US or India: the currency new groups start in and how money and dates look, here and in every Pixora app."}),csel));}
   app.append(h("div",{class:"panel"},h("h3",{text:"Ideas or problems?"}),h("p",{class:"small muted",text:"Tell Sachin what would make Split Log better or what went wrong. Nothing from your groups is sent."}),
     h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",text:"Send feedback",onclick:function(){if(window.PixoraFeedback)PixoraFeedback.open("splitlog","Split Log");}}))));
   app.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every group, expense, receipt photo and the passcode from this phone. If you're signed in, it also leaves your shared groups and clears Split Log from your Pixora account. Friends keep their copies. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),
@@ -1447,7 +1454,7 @@ function cloudPanel(){
     }});
     p.append(h("div",{class:"btnrow"},jb,rb));
   }else{
-    var when=lastSync?new Date(lastSync).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit"}):"";
+    var when=lastSync?new Date(lastSync).toLocaleTimeString(LOC(),{hour:"numeric",minute:"2-digit"}):"";
     p.append(h("p",{class:"small muted",text:cloudState==="synced"?"Your groups are backed up"+(when?" (last checked "+when+")":"")+". Changes from friends and your other phones show up on their own. Receipt photos stay on the phone that took them.":cloudState==="offline"?"Offline. Changes are kept on this phone and upload when you're back online.":cloudState==="error"?"Sync paused"+(cloudErr?" ("+cloudErr+")":"")+". Tap Sync now to try again.":"Syncing…"}));
     p.append(h("div",{class:"btnrow"},
       h("button",{type:"button",class:"btn",text:"Sync now",onclick:function(){cloudStart().then(render);}}),
